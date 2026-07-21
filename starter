@@ -1,0 +1,77 @@
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+from PIL import Image
+import time
+import base64
+import os
+from openai import OpenAI  # or your preferred client
+
+# Setup
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+wait = WebDriverWait(driver, 15)
+
+client = OpenAI(api_key="your-openai-key")  # Or Groq, etc.
+
+def image_to_base64(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode('utf-8')
+
+try:
+    driver.get("https://www.aleks.com")  # Login URL
+    
+    # === LOGIN (you'll need to adapt selectors or do it manually first) ===
+    # wait.until(...).send_keys(...) etc.
+    input("Log in manually if needed, then press Enter to continue...")
+
+    while True:  # Loop through questions
+        # Wait for question to load
+        time.sleep(3)
+        
+        # Find and screenshot the question image/area
+        try:
+            question_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "img.math-question, div.question-content, .problem")))  # Inspect ALEKS for best selector
+            question_element.screenshot("current_question.png")
+            print("Screenshot captured")
+        except:
+            print("Could not find question image. Inspect page.")
+            break
+        
+        # Send to Vision LLM
+        base64_image = image_to_base64("current_question.png")
+        
+        response = client.chat.completions.create(
+            model="gpt-4o",  # or gpt-4o-mini for cheaper
+            messages=[
+                {"role": "system", "content": "You are a math expert. Solve the problem step-by-step and give ONLY the final answer in the exact format ALEKS expects (no explanation)."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Solve this math problem:"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+                ]}
+            ],
+            max_tokens=500
+        )
+        
+        answer = response.choices[0].message.content.strip()
+        print("LLM Answer:", answer)
+        
+        # Input the answer into ALEKS (adapt selector)
+        answer_box = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input.answer-input, textarea, .math-input")))  # Inspect real selector
+        answer_box.clear()
+        answer_box.send_keys(answer)
+        
+        # Submit (adapt)
+        submit_btn = driver.find_element(By.CSS_SELECTOR, "button.submit")
+        submit_btn.click()
+        
+        print("Answer submitted. Waiting for next...")
+        time.sleep(5)  # Adjust based on ALEKS flow
+
+except Exception as e:
+    print("Error:", e)
+finally:
+    # driver.quit()
+    pass
